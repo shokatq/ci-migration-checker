@@ -1,0 +1,56 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`fixture express-ci.yml > matches the reviewed output 2`] = `
+{
+  "counts": {
+    "clean": 21,
+    "manual": 7,
+    "none": 0,
+  },
+  "score": 88,
+}
+`;
+
+exports[`fixture fastapi-test.yml > matches the reviewed output 2`] = `
+{
+  "counts": {
+    "clean": 38,
+    "manual": 28,
+    "none": 3,
+  },
+  "score": 75,
+}
+`;
+
+exports[`fixture flask-tests.yml > matches the reviewed output 2`] = `
+{
+  "counts": {
+    "clean": 12,
+    "manual": 5,
+    "none": 0,
+  },
+  "score": 85,
+}
+`;
+
+exports[`fixture gin.yml > matches the reviewed output 2`] = `
+{
+  "counts": {
+    "clean": 11,
+    "manual": 6,
+    "none": 0,
+  },
+  "score": 82,
+}
+`;
+
+exports[`fixture vite-ci.yml > matches the reviewed output 2`] = `
+{
+  "counts": {
+    "clean": 32,
+    "manual": 13,
+    "none": 3,
+  },
+  "score": 80,
+}
+`;

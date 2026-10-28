@@ -1,0 +1,41 @@
+# CI for this project. (Yes, the GitHub → GitLab checker runs on GitLab CI.)
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+
+default:
+  image: node:24
+  interruptible: true
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - .npm/
+  before_script:
+    - npm ci --cache .npm --prefer-offline
+
+stages:
+  - check
+
+lint:
+  stage: check
+  script:
+    - npm run lint
+
+test:
+  stage: check
+  script:
+    - npm test
+
+build:
+  stage: check
+  script:
+    - npm run build
+  artifacts:
+    paths:
+      - out/
+    expire_in: 1 week
