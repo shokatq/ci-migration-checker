@@ -88,13 +88,13 @@ It is deliberately simple so a reader can check it by hand.
 - **Comments are first-class output.** The YAML is built with the `yaml` library's document model so TODOs sit directly above the job or line they are about, not in a separate list.
 - **Real fixtures, reviewed output.** Tests run on unmodified workflows from popular repos, and the generated files are snapshot files in the repo. Any change in output is a visible diff in code review.
 - **Each workflow becomes a stage, and jobs use `needs`.** GitHub runs a workflow's jobs in parallel unless they declare `needs`. Using `needs` (and `needs: []` for root jobs in later stages) keeps that behavior instead of serialising everything by stage.
-- **The minutes estimate is stratified by workflow.** Repos mix cheap bot workflows with expensive test matrices, so sampling the newest runs badly underestimates cost. The estimator samples runs per workflow, weights by how often each runs, and discards runs that never executed (e.g. fork PRs waiting for approval). Each job is rounded up to the minute, as both platforms bill.
+- **The minutes estimate is stratified by workflow.** Repos mix cheap bot workflows with expensive test matrices, so sampling the newest runs badly underestimates cost. The estimator samples runs per workflow, weights by how often each runs, and keeps sampling past runs that report success/failure but never started a job (fork PRs that were never approved), counting those as free. Each job is rounded up to the minute, as both platforms bill. Checked by hand on expressjs/express: the estimate was ~1,140 job-minutes/month against ~1,230 measured from its run history.
 
 ## Limitations
 
 - The generated file is a starting point. It has not been run on GitLab for you; test it on a branch.
 - Reusable workflows, composite actions and `workflow_run` chains are flagged, not converted.
-- The minutes estimate uses at most 6 sampled runs and ignores GitLab cost factors for non-Linux runners (it reports their share instead).
+- The minutes estimate uses at most 10 sampled runs across the 4 busiest workflows and ignores GitLab cost factors for non-Linux runners (it reports their share instead).
 - Only `.github/workflows/*.yml` on the default branch (or the branch in a `/tree/<branch>` URL) is read.
 
 ## Running locally

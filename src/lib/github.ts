@@ -96,10 +96,16 @@ export interface MinutesEstimate {
   nonLinuxShare: number;
 }
 
-/** One workflow's share of all runs, and the job timings of its sampled runs. */
+/**
+ * One workflow's share of all runs and its sampled runs. Runs that report
+ * success/failure but never started a job (typically fork PRs that were never
+ * approved) are counted in `emptyRuns`: they are real, but cost nothing.
+ */
 export interface WorkflowSample {
   share: number;
+  /** Job timings of sampled runs that ran at least one job. */
   runs: JobTiming[][];
+  emptyRuns?: number;
 }
 
 /** Job-minutes of one run; like GitHub and GitLab, each job is rounded up to the minute. */
@@ -117,6 +123,11 @@ function runMinutes(jobs: JobTiming[]): { total: number; nonLinux: number } {
   return { total, nonLinux };
 }
 
+/** True when a run has at least one job that actually started. */
+export function ranJobs(jobs: JobTiming[]): boolean {
+  return jobs.some((j) => j.started_at && j.completed_at);
+}
+
 /**
  * Workflows differ wildly in cost (a 40-job test matrix vs a labeler bot), so
  * each workflow is sampled separately and weighted by how often it runs.
@@ -124,15 +135,17 @@ function runMinutes(jobs: JobTiming[]): { total: number; nonLinux: number } {
  * nothing (fork PRs awaiting approval, skipped, cancelled).
  */
 export function summarizeRuns(runsLast30Days: number, samples: WorkflowSample[], executedShare = 1): MinutesEstimate | null {
-  const sampled = samples.filter((s) => s.runs.length);
-  if (!sampled.length) return null;
+  const sampled = samples.filter((s) => s.runs.length || s.emptyRuns);
+  if (!sampled.some((s) => s.runs.length)) return null;
   let avg = 0;
   let weighted = 0;
   let total = 0;
   let nonLinux = 0;
   for (const s of sampled) {
     const mins = s.runs.map(runMinutes);
-    const wfAvg = mins.reduce((sum, m) => sum + m.total, 0) / mins.length;
+    const empty = s.emptyRuns ?? 0;
+    // Average over runs with jobs, scaled by how many sampled runs had none.
+    const wfAvg = mins.length ? (mins.reduce((sum, m) => sum + m.total, 0) / mins.length) * (mins.length / (mins.length + empty)) : 0;
     avg += s.share * wfAvg;
     weighted += s.share;
     for (const m of mins) {
@@ -144,7 +157,7 @@ export function summarizeRuns(runsLast30Days: number, samples: WorkflowSample[],
   avg /= weighted;
   return {
     runsLast30Days,
-    sampledRuns: sampled.reduce((n, s) => n + s.runs.length, 0),
+    sampledRuns: sampled.reduce((n, s) => n + s.runs.length + (s.emptyRuns ?? 0), 0),
     avgMinutesPerRun: Math.round(avg * 10) / 10,
     executedShare,
     monthlyMinutes: Math.round(avg * runsLast30Days * executedShare),
@@ -153,7 +166,11 @@ export function summarizeRuns(runsLast30Days: number, samples: WorkflowSample[],
 }
 
 const LIST_RUNS = 100;
-const SAMPLE_RUNS = 6;
+/** Jobs API calls per estimate; with the runs list that's 11 of the 60/hour unauthenticated budget. */
+const SAMPLE_BUDGET = 10;
+const MAX_WORKFLOWS = 4;
+/** Stop sampling a workflow once this many of its runs had jobs. */
+const RUNS_WITH_JOBS = 2;
 
 interface RunSummary {
   id: number;
@@ -161,7 +178,20 @@ interface RunSummary {
   conclusion: string | null;
 }
 
-/** Costs 1 + up to SAMPLE_RUNS API calls. Returns null when there is no run history. */
+/** Indexes at 0, 1/2, 1/4, 3/4, 1/8, 3/8, ... of the list, so samples spread over the month. */
+export function spreadOrder(n: number): number[] {
+  const order = n ? [0] : [];
+  for (let parts = 2; order.length < n && parts <= 2 * n; parts *= 2) {
+    for (let k = 1; k < parts; k += 2) {
+      const i = Math.floor((k * n) / parts);
+      if (!order.includes(i)) order.push(i);
+    }
+  }
+  for (let i = 0; i < n; i++) if (!order.includes(i)) order.push(i);
+  return order;
+}
+
+/** Costs 1 + up to SAMPLE_BUDGET API calls. Returns null when there is no run history. */
 export async function estimateMinutes(ref: RepoRef, token?: string, fetchImpl: Fetch = fetch): Promise<MinutesEstimate | null> {
   const since = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
   const list = await api<{ total_count: number; workflow_runs: RunSummary[] }>(
@@ -174,19 +204,21 @@ export async function estimateMinutes(ref: RepoRef, token?: string, fetchImpl: F
 
   const byWorkflow = new Map<number, RunSummary[]>();
   for (const r of executed) byWorkflow.set(r.workflow_id, [...(byWorkflow.get(r.workflow_id) ?? []), r]);
-  // Busiest workflows first; spread the remaining samples over them.
-  const groups = [...byWorkflow.values()].sort((a, b) => b.length - a.length).slice(0, SAMPLE_RUNS);
-  const perGroup = Math.max(1, Math.floor(SAMPLE_RUNS / groups.length));
+  // Busiest workflows first; split the call budget between them.
+  const groups = [...byWorkflow.values()].sort((a, b) => b.length - a.length).slice(0, MAX_WORKFLOWS);
+  const perGroup = Math.max(2, Math.floor(SAMPLE_BUDGET / groups.length));
 
   const samples = await Promise.all(
-    groups.map(async (runs) => {
-      const picked = Array.from({ length: Math.min(perGroup, runs.length) }, (_, i) => runs[Math.floor((i * runs.length) / perGroup)]);
-      const timings = await Promise.all(
-        picked.map((r) =>
-          api<{ jobs: JobTiming[] }>(`/repos/${ref.owner}/${ref.repo}/actions/runs/${r.id}/jobs?per_page=100`, token, fetchImpl).then((x) => x.jobs),
-        ),
-      );
-      return { share: runs.length / executed.length, runs: timings };
+    groups.map(async (runs): Promise<WorkflowSample> => {
+      const sample: WorkflowSample = { share: runs.length / executed.length, runs: [], emptyRuns: 0 };
+      // Sequential, so a workflow stops as soon as it has enough runs with jobs.
+      for (const i of spreadOrder(runs.length).slice(0, perGroup)) {
+        const { jobs } = await api<{ jobs: JobTiming[] }>(`/repos/${ref.owner}/${ref.repo}/actions/runs/${runs[i].id}/jobs?per_page=100`, token, fetchImpl);
+        if (ranJobs(jobs)) sample.runs.push(jobs);
+        else sample.emptyRuns!++;
+        if (sample.runs.length >= RUNS_WITH_JOBS) break;
+      }
+      return sample;
     }),
   );
   return summarizeRuns(list.total_count, samples, executed.length / list.workflow_runs.length);
