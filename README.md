@@ -1,5 +1,7 @@
 # CI Migration Checker
 
+**Try it: [ci-migration-checker.vercel.app](https://ci-migration-checker.vercel.app)**. Reports can be shared as links, e.g. [the report for gin-gonic/gin](https://ci-migration-checker.vercel.app/?repo=gin-gonic/gin).
+
 **How ready is your GitHub Actions setup to move to GitLab CI?** Paste a public GitHub repo URL (or workflow YAML) and get:
 
 - a **readiness score** (0–100) and a verdict
