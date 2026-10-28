@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { analyze } from "@/engine/analyze";
 import type { Report as ReportData, WorkflowFile } from "@/engine/types";
 import { estimateMinutes, fetchWorkflows, GitHubError, parseRepoUrl, type MinutesEstimate } from "@/lib/github";
@@ -66,6 +66,8 @@ export function Checker() {
       const files = await fetchWorkflows(ref, token || undefined);
       setReport(analyze(files));
       setSource(`${ref.owner}/${ref.repo}`);
+      // Make the report shareable: /?repo=owner/name
+      window.history.replaceState(null, "", `?repo=${ref.owner}/${ref.repo}${ref.ref ? `/tree/${ref.ref}` : ""}`);
       setMinutes({ status: "loading" });
       estimateMinutes(ref, token || undefined)
         .then((value) => setMinutes(value ? { status: "ok", value } : { status: "unknown", reason: "No completed runs in the last 30 days." }))
@@ -88,6 +90,17 @@ export function Checker() {
     setSource("pasted YAML");
     setMinutes({ status: "unknown", reason: "Run history is only available when checking a GitHub repo." });
   }
+
+  // Run the check straight away for shared links (/?repo=owner/name).
+  const started = useRef(false);
+  useEffect(() => {
+    const repo = new URLSearchParams(window.location.search).get("repo");
+    if (!repo || started.current) return;
+    started.current = true;
+    setUrl(repo);
+    checkRepo(repo);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on load
+  }, []);
 
   const tab = (m: Mode, label: string) => (
     <button
