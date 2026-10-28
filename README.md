@@ -29,7 +29,7 @@ I wrote [an analysis of GitLab's public financials](https://www.linkedin.com/pul
 | gin-gonic/gin `gin.yml` | 82 | 11 | 6 | 0 |
 | fastapi/fastapi `test.yml` | 75 | 38 | 28 | 3 |
 
-**Survey of 12 more repos** (every workflow in each, 490 jobs in total, run with `npm run survey`). Every one produced valid YAML, with no crashes or parse errors.
+**Survey of 12 more repos** (every workflow in each, 490 jobs in total, run with `npm run survey`). Every one produced valid YAML in which every `needs` points at a real job, with no crashes or parse errors.
 
 | Repo | Workflows | Jobs | Score |
 | --- | ---: | ---: | ---: |
@@ -56,7 +56,7 @@ Library-style projects with Linux test matrices score highest. Large products sc
 | `on: pull_request` | `$CI_PIPELINE_SOURCE == "merge_request_event"` | Adds the standard guard against duplicate branch + MR pipelines. |
 | `on: schedule` / `workflow_dispatch` | `schedule` / `web` pipeline sources | Schedules must be created in project settings; the report includes the cron. |
 | `jobs.<id>` / `needs` | jobs / `needs` | Jobs keep their ids. Each workflow becomes a stage. |
-| `runs-on` | GitLab.com shared runners or `tags` | Windows, macOS, ARM, larger and self-hosted runners are flagged. |
+| `runs-on` | GitLab.com shared runners or `tags` | A matrix over `os` is split: Linux legs stay in the job, Windows and macOS legs become sibling jobs (`test-windows`, `test-macos`) on GitLab's hosted runners, and downstream `needs` wait for all of them. ARM, larger and self-hosted runners are flagged. |
 | `actions/setup-node`, `-python`, `-go`, `-java`, `-dotnet`, `ruby/setup-ruby`, Rust, Bun, Deno | job `image` | `node:20`, `python:3.12`, `golang:1.23`… including matrix values (`node:$NODE_VERSION`). |
 | `strategy.matrix` | `parallel:matrix` | `include` entries that add new combinations are supported. `exclude` is flagged. |
 | `env`, `vars.*` | `variables` | |

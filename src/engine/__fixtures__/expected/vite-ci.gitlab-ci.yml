@@ -31,7 +31,6 @@ changed:
     # TODO: Get changed files (uses: tj-actions/changed-files@<sha>): → `rules:changes` on the jobs that should be skipped
     - 'echo "TODO: port this job"'
 
-# TODO: macos-latest, windows-latest legs were dropped from the matrix; they need GitLab Windows/macOS runners (tags)
 # TODO: job condition not converted: needs.changed.outputs.should_skip != 'true'
 test:
   stage: vite-ci
@@ -84,12 +83,115 @@ test:
     - pnpm run test-serve-bundled
     - pnpm run test-build
 
+# TODO: Windows runners (beta) run PowerShell in a VM, not bash in a container; port the script and install the toolchain
+test-windows:
+  stage: vite-ci
+  tags:
+    - saas-windows-medium-amd64
+  needs:
+    - changed
+  variables:
+    npm_config_store_dir: $CI_PROJECT_DIR/.pnpm-store
+  parallel:
+    matrix:
+      - OS:
+          - windows-latest
+        NODE_VERSION:
+          - "24"
+  timeout: 20 minutes
+  cache:
+    - key:
+        files:
+          - pnpm-lock.yaml
+      paths:
+        - .pnpm-store/
+    - key: ${{ runner.os }}-playwright-bin-v1-$PLAYWRIGHT_VERSION
+      paths:
+        - $PLAYWRIGHT_BROWSERS_PATH
+  script:
+    # TODO: only run when `matrix.node_version != '20'`
+    - corepack enable
+    # TODO: only run when `runner.os != 'Windows'`
+    # TODO: `$GITHUB_ENV` → `export NAME=value` (all script lines share one shell)
+    - |-
+      echo "PLAYWRIGHT_BROWSERS_PATH=$HOME/.cache/playwright-bin" >> $GITHUB_ENV
+      PLAYWRIGHT_VERSION="$(pnpm ls --depth 0 --json -w playwright-chromium | jq --raw-output '.[0].devDependencies["playwright-chromium"].version')"
+      echo "PLAYWRIGHT_VERSION=$PLAYWRIGHT_VERSION" >> $GITHUB_ENV
+    # TODO: only run when `runner.os == 'Windows'`
+    # TODO: `$GITHUB_ENV` → `export NAME=value` (all script lines share one shell)
+    - |-
+      echo "PLAYWRIGHT_BROWSERS_PATH=$HOME\.cache\playwright-bin" >> $env:GITHUB_ENV
+      $env:PLAYWRIGHT_VERSION="$(pnpm ls --depth 0 --json -w playwright-chromium | jq --raw-output '.[0].devDependencies["playwright-chromium"].version')"
+      echo "PLAYWRIGHT_VERSION=$env:PLAYWRIGHT_VERSION" >> $env:GITHUB_ENV
+    # TODO: Cache Playwright's binary (uses: actions/cache@<sha>): → `cache:` with the same paths and key; runner.os has no GitLab equivalent; `restore-keys` → `cache:fallback_keys` if you need them
+    - pnpm playwright install chromium
+    - pnpm run build
+    # TODO: only run when `matrix.node_version == '20'`
+    - pnpm runtime set node $NODE_VERSION -g
+    - pnpm run test-unit
+    - pnpm run test-serve
+    - pnpm run test-serve-bundled
+    - pnpm run test-build
+
+# TODO: macOS runners need GitLab Premium or Ultimate; pick the macOS image and install the toolchain (e.g. with Homebrew) in script
+test-macos:
+  stage: vite-ci
+  image: macos-15-xcode-16
+  tags:
+    - saas-macos-medium-m1
+  needs:
+    - changed
+  variables:
+    npm_config_store_dir: $CI_PROJECT_DIR/.pnpm-store
+  parallel:
+    matrix:
+      - OS:
+          - macos-latest
+        NODE_VERSION:
+          - "24"
+  timeout: 20 minutes
+  cache:
+    - key:
+        files:
+          - pnpm-lock.yaml
+      paths:
+        - .pnpm-store/
+    - key: ${{ runner.os }}-playwright-bin-v1-$PLAYWRIGHT_VERSION
+      paths:
+        - $PLAYWRIGHT_BROWSERS_PATH
+  script:
+    # TODO: only run when `matrix.node_version != '20'`
+    - corepack enable
+    # TODO: only run when `runner.os != 'Windows'`
+    # TODO: `$GITHUB_ENV` → `export NAME=value` (all script lines share one shell)
+    - |-
+      echo "PLAYWRIGHT_BROWSERS_PATH=$HOME/.cache/playwright-bin" >> $GITHUB_ENV
+      PLAYWRIGHT_VERSION="$(pnpm ls --depth 0 --json -w playwright-chromium | jq --raw-output '.[0].devDependencies["playwright-chromium"].version')"
+      echo "PLAYWRIGHT_VERSION=$PLAYWRIGHT_VERSION" >> $GITHUB_ENV
+    # TODO: only run when `runner.os == 'Windows'`
+    # TODO: `$GITHUB_ENV` → `export NAME=value` (all script lines share one shell)
+    - |-
+      echo "PLAYWRIGHT_BROWSERS_PATH=$HOME\.cache\playwright-bin" >> $env:GITHUB_ENV
+      $env:PLAYWRIGHT_VERSION="$(pnpm ls --depth 0 --json -w playwright-chromium | jq --raw-output '.[0].devDependencies["playwright-chromium"].version')"
+      echo "PLAYWRIGHT_VERSION=$env:PLAYWRIGHT_VERSION" >> $env:GITHUB_ENV
+    # TODO: Cache Playwright's binary (uses: actions/cache@<sha>): → `cache:` with the same paths and key; runner.os has no GitLab equivalent; `restore-keys` → `cache:fallback_keys` if you need them
+    - pnpm playwright install chromium
+    - pnpm run build
+    # TODO: only run when `matrix.node_version == '20'`
+    - pnpm runtime set node $NODE_VERSION -g
+    - pnpm run test-unit
+    - pnpm run test-serve
+    - pnpm run test-serve-bundled
+    - pnpm run test-build
+
 # TODO: GitHub's ubuntu runner has many tools preinstalled; pick an image with what this job needs
 test-passed:
   stage: vite-ci
   image: ubuntu:24.04
   needs:
     - test
+    - test-windows
+    - test-macos
   script:
     - echo "Build & Test Passed or Skipped"
 
@@ -99,6 +201,8 @@ test-failed:
   image: ubuntu:24.04
   needs:
     - test
+    - test-windows
+    - test-macos
   rules:
     - when: on_failure
   script:

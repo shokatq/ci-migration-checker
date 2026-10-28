@@ -186,7 +186,7 @@ jobs:
     expect(ci.t.script).toEqual(["apt-get update && apt-get install -y jq && echo $CI_COMMIT_SHA"]);
   });
 
-  it("drops non-Linux matrix legs and marks the job manual", () => {
+  it("splits Windows/macOS matrix legs into sibling jobs on hosted runners", () => {
     const { report, ci } = convert(`
 on: push
 jobs:
@@ -196,14 +196,67 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         go: ["1.22", "1.23"]
+    services:
+      redis: { image: redis:7 }
     steps:
       - uses: actions/setup-go@v5
         with: { go-version: "\${{ matrix.go }}" }
       - run: go test ./...
+  report:
+    needs: t
+    runs-on: ubuntu-latest
+    steps: [{ run: echo done }]
 `);
     expect(ci.t.parallel.matrix).toEqual([{ OS: ["ubuntu-latest"], GO: ["1.22", "1.23"] }]);
     expect(ci.t.image).toBe("golang:$GO");
+    expect(ci["t-windows"]).toMatchObject({ tags: ["saas-windows-medium-amd64"], parallel: { matrix: [{ OS: ["windows-latest"], GO: ["1.22", "1.23"] }] } });
+    expect(ci["t-windows"].image).toBeUndefined(); // Windows runners are VMs
+    expect(ci["t-windows"].services).toBeUndefined();
+    expect(ci["t-macos"]).toMatchObject({ tags: ["saas-macos-medium-m1"], image: "macos-15-xcode-16" });
+    expect(ci["t-macos"].script).toEqual(ci.t.script);
+    expect(ci.report.needs).toEqual(["t", "t-windows", "t-macos"]);
+    expect(report.gitlabCi).toContain("# TODO: Windows runners (beta) run PowerShell");
     expect(finding(report, "t", /^runs-on/).status).toBe("manual");
+  });
+
+  it("handles a runs-on default and matrices with no Linux legs", () => {
+    const { ci } = convert(`
+on: push
+jobs:
+  mixed:
+    runs-on: \${{ matrix.os || 'ubuntu-latest' }}
+    strategy:
+      matrix:
+        include:
+          - { python: "3.12" }
+          - { python: "3.12", os: macos-latest }
+    steps: [{ run: make test }]
+  mac:
+    runs-on: \${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-14, macos-15]
+    steps: [{ run: make test }]
+`);
+    expect(ci.mixed.parallel.matrix).toEqual([{ PYTHON: ["3.12"] }]);
+    expect(ci["mixed-macos"].parallel.matrix).toEqual([{ PYTHON: ["3.12"], OS: ["macos-latest"] }]);
+    expect(ci.mac).toBeUndefined();
+    expect(ci["mac-macos"].parallel.matrix).toEqual([{ OS: ["macos-14", "macos-15"] }]);
+  });
+
+  it("drops the container image when the whole job runs on Windows", () => {
+    const { ci } = convert(`
+on: push
+jobs:
+  w:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm test
+`);
+    expect(ci.w.tags).toEqual(["saas-windows-medium-amd64"]);
+    expect(ci.w.image).toBeUndefined();
   });
 });
 
@@ -264,11 +317,12 @@ describe("fixture specifics", () => {
   const load = (name: string) =>
     analyze([{ path: `.github/workflows/${name}`, content: readFileSync(path.join(__dirname, "__fixtures__", name), "utf8") }]);
 
-  it("express: 9 Node versions on Linux, Windows legs flagged", () => {
+  it("express: 9 Node versions on Linux plus a Windows sibling job", () => {
     const ci = parse(load("express-ci.yml").gitlabCi);
     expect(ci.test.parallel.matrix[0].NODE_VERSION).toHaveLength(9);
     expect(ci.test.parallel.matrix[0].OS).toEqual(["ubuntu-latest"]);
-    expect(ci.coverage.needs).toEqual(["test"]);
+    expect(ci["test-windows"].parallel.matrix[0].NODE_VERSION).toHaveLength(9);
+    expect(ci.coverage.needs).toEqual(["test", "test-windows"]);
   });
 
   it("gin: full clone for lint, codecov flagged", () => {

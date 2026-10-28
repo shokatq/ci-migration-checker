@@ -70,7 +70,8 @@ export function emit(model: PipelineModel): string {
   if (model.default) root.default = model.default;
   for (const job of model.jobs) root[job.name] = orderJob(job);
 
-  const doc = new Document(root);
+  // Plain repeated values instead of &anchors/*aliases: easier to read and edit.
+  const doc = new Document(root, { aliasDuplicateObjects: false });
   doc.commentBefore = asComment(model.header);
   const top = doc.contents as YAMLMap;
   top.items.forEach((pair, idx) => {

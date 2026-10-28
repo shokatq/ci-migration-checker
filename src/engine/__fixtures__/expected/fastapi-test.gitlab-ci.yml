@@ -26,7 +26,6 @@ changes:
     # TODO: uses: dorny/paths-filter@<sha>: → `rules:changes` on the jobs that should be skipped
     - 'echo "TODO: port this job"'
 
-# TODO: windows-latest, macos-latest legs were dropped from the matrix; they need GitLab Windows/macOS runners (tags)
 # TODO: job condition not converted: needs.changes.outputs.src == 'true' || github.ref == 'refs/heads/master'
 test:
   stage: fastapi-test
@@ -52,6 +51,127 @@ test:
           - starlette-git
         DEPRECATED_TESTS:
           - test-deprecation
+  timeout: 10 minutes
+  cache:
+    key:
+      files:
+        - uv.lock
+    paths:
+      - .cache/uv/
+  script:
+    # TODO: expression `toJson(github)` needs rewriting as shell logic
+    - export GITHUB_CONTEXT="${{ toJson(github) }}"
+    - echo "$GITHUB_CONTEXT"
+    - pip install uv
+    - uv sync --no-dev --group tests --extra all
+    # TODO: only run when `matrix.uv-resolution == 'lowest-direct'`
+    - uv pip install "pydantic==2.9.0"
+    # TODO: only run when `matrix.starlette-src == 'starlette-git'`
+    - uv pip install "git+https://github.com/Kludex/starlette@main"
+    # TODO: only run when `matrix.deprecated-tests == 'test-deprecation'`
+    - uv pip install orjson ujson
+    # TODO: only run when `matrix.without-httpx2 == 'true'`
+    - uv pip uninstall httpx2
+    # TODO: only run when `matrix.python-version == '3.14t' && matrix.os == 'ubuntu-latest'`
+    - "DISABLE_SQLALCHEMY_CEXT=1 uv pip install --force-reinstall --no-binary :all: sqlalchemy"
+    - mkdir coverage
+    # TODO: runner.os has no GitLab equivalent; expression `(matrix.without-httpx2 == 'true') && '-W ignore::UserWarning' || ''` needs rewriting as shell logic
+    - export COVERAGE_FILE="coverage/.coverage.${{ runner.os }}-py$PYTHON_VERSION-$DEPRECATED_TESTS"
+    - export CONTEXT="${{ runner.os }}-py$PYTHON_VERSION-$DEPRECATED_TESTS"
+    - export PYTEST_OPTIONS="${{ (matrix.without-httpx2 == 'true') && '-W ignore::UserWarning' || '' }}"
+    - uv run --no-sync bash scripts/test-cov.sh $PYTEST_OPTIONS
+  artifacts:
+    name: coverage-${{ runner.os }}-$PYTHON_VERSION-$DEPRECATED_TESTS-${{ hashFiles('**/coverage/.coverage.*') }}
+    paths:
+      - coverage
+
+# TODO: Windows runners (beta) run PowerShell in a VM, not bash in a container; port the script and install the toolchain
+test-windows:
+  stage: fastapi-test
+  tags:
+    - saas-windows-medium-amd64
+  needs:
+    - changes
+  variables:
+    UV_PYTHON: $PYTHON_VERSION
+    UV_RESOLUTION: $UV_RESOLUTION
+    STARLETTE_SRC: $STARLETTE_SRC
+    UV_CACHE_DIR: $CI_PROJECT_DIR/.cache/uv
+  parallel:
+    matrix:
+      - OS:
+          - windows-latest
+        PYTHON_VERSION:
+          - "3.14"
+          - 3.14t
+        DEPRECATED_TESTS:
+          - no-deprecation
+        UV_RESOLUTION:
+          - highest
+        STARLETTE_SRC:
+          - starlette-pypi
+          - starlette-git
+  timeout: 10 minutes
+  cache:
+    key:
+      files:
+        - uv.lock
+    paths:
+      - .cache/uv/
+  script:
+    # TODO: expression `toJson(github)` needs rewriting as shell logic
+    - export GITHUB_CONTEXT="${{ toJson(github) }}"
+    - echo "$GITHUB_CONTEXT"
+    - pip install uv
+    - uv sync --no-dev --group tests --extra all
+    # TODO: only run when `matrix.uv-resolution == 'lowest-direct'`
+    - uv pip install "pydantic==2.9.0"
+    # TODO: only run when `matrix.starlette-src == 'starlette-git'`
+    - uv pip install "git+https://github.com/Kludex/starlette@main"
+    # TODO: only run when `matrix.deprecated-tests == 'test-deprecation'`
+    - uv pip install orjson ujson
+    # TODO: only run when `matrix.without-httpx2 == 'true'`
+    - uv pip uninstall httpx2
+    # TODO: only run when `matrix.python-version == '3.14t' && matrix.os == 'ubuntu-latest'`
+    - "DISABLE_SQLALCHEMY_CEXT=1 uv pip install --force-reinstall --no-binary :all: sqlalchemy"
+    - mkdir coverage
+    # TODO: runner.os has no GitLab equivalent; expression `(matrix.without-httpx2 == 'true') && '-W ignore::UserWarning' || ''` needs rewriting as shell logic
+    - export COVERAGE_FILE="coverage/.coverage.${{ runner.os }}-py$PYTHON_VERSION-$DEPRECATED_TESTS"
+    - export CONTEXT="${{ runner.os }}-py$PYTHON_VERSION-$DEPRECATED_TESTS"
+    - export PYTEST_OPTIONS="${{ (matrix.without-httpx2 == 'true') && '-W ignore::UserWarning' || '' }}"
+    - uv run --no-sync bash scripts/test-cov.sh $PYTEST_OPTIONS
+  artifacts:
+    name: coverage-${{ runner.os }}-$PYTHON_VERSION-$DEPRECATED_TESTS-${{ hashFiles('**/coverage/.coverage.*') }}
+    paths:
+      - coverage
+
+# TODO: macOS runners need GitLab Premium or Ultimate; pick the macOS image and install the toolchain (e.g. with Homebrew) in script
+test-macos:
+  stage: fastapi-test
+  image: macos-15-xcode-16
+  tags:
+    - saas-macos-medium-m1
+  needs:
+    - changes
+  variables:
+    UV_PYTHON: $PYTHON_VERSION
+    UV_RESOLUTION: $UV_RESOLUTION
+    STARLETTE_SRC: $STARLETTE_SRC
+    UV_CACHE_DIR: $CI_PROJECT_DIR/.cache/uv
+  parallel:
+    matrix:
+      - OS:
+          - macos-latest
+        PYTHON_VERSION:
+          - "3.14"
+          - 3.14t
+        DEPRECATED_TESTS:
+          - no-deprecation
+        UV_RESOLUTION:
+          - highest
+        STARLETTE_SRC:
+          - starlette-pypi
+          - starlette-git
   timeout: 10 minutes
   cache:
     key:
@@ -178,6 +298,8 @@ coverage-combine:
   image: python:latest
   needs:
     - test
+    - test-windows
+    - test-macos
   variables:
     UV_CACHE_DIR: $CI_PROJECT_DIR/.cache/uv
   timeout: 5 minutes
@@ -210,6 +332,8 @@ test-alls-green:
   image: ubuntu:24.04
   needs:
     - test
+    - test-windows
+    - test-macos
     - coverage-combine
     - benchmark
     - regression-test

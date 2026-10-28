@@ -15,6 +15,10 @@ export interface ConvertedJob {
   /** Comments rendered above the job. */
   todos: string[];
   findings: Finding[];
+  /** Windows/macOS matrix legs, emitted as sibling jobs `<name>-<suffix>`. */
+  variants: PlatformVariant[];
+  /** All matrix legs were non-Linux, so only the variants are emitted. */
+  noLinuxLegs?: boolean;
 }
 
 const isObj = (v: unknown): v is Obj => !!v && typeof v === "object" && !Array.isArray(v);
@@ -117,65 +121,125 @@ function convertMatrix(strategy: Obj, ctx: ExprContext, findings: Finding[]): Ob
   return entries.length ? entries : undefined;
 }
 
+type Platform = "windows" | "macos";
+
+/** GitLab.com hosted runners for non-Linux jobs. */
+const PLATFORMS: Record<Platform, { tags: string[]; image?: string; todo: string }> = {
+  windows: {
+    tags: ["saas-windows-medium-amd64"],
+    todo: "TODO: Windows runners (beta) run PowerShell in a VM, not bash in a container; port the script and install the toolchain",
+  },
+  macos: {
+    tags: ["saas-macos-medium-m1"],
+    image: "macos-15-xcode-16",
+    todo: "TODO: macOS runners need GitLab Premium or Ultimate; pick the macOS image and install the toolchain (e.g. with Homebrew) in script",
+  },
+};
+
+function platformOf(label: string): Platform | "linux" | "other" {
+  if (/windows/i.test(label)) return "windows";
+  if (/macos/i.test(label)) return "macos";
+  if (LINUX.test(label)) return "linux";
+  return "other";
+}
+
+/** Matrix legs that must run on another platform, as a sibling GitLab job. */
+export interface PlatformVariant {
+  platform: Platform;
+  suffix: string;
+  tags: string[];
+  /** undefined = no image (Windows runners use a VM, not a container). */
+  image?: string;
+  matrix: Obj[];
+  todo: string;
+}
+
+interface RunsOn {
+  tags?: string[];
+  /** Set when the whole job runs on Windows or macOS. */
+  platform?: Platform;
+  variants: PlatformVariant[];
+  /** Every matrix leg moved to a variant, so the base job has nothing left to run. */
+  noLinuxLegs?: boolean;
+}
+
 /**
- * `runs-on` → tags. When it's `${{ matrix.<key> }}`, non-Linux legs are
- * dropped from the matrix (and reported) since they need different runners.
+ * `runs-on` → tags. When it's `${{ matrix.<key> }}` (optionally with a
+ * `|| 'ubuntu-latest'` default), Windows/macOS legs are split out of the
+ * matrix into sibling jobs on GitLab's hosted Windows/macOS runners.
  */
-function convertRunsOn(runsOn: unknown, matrix: Obj[] | undefined, findings: Finding[], todos: string[]): string[] | undefined {
+function convertRunsOn(runsOn: unknown, matrix: Obj[] | undefined, findings: Finding[], todos: string[]): RunsOn {
   const raw = asList(runsOn).map(String);
   const feature = `runs-on: ${raw.join(", ")}`;
-  const mref = raw.length === 1 ? /^\$\{\{\s*matrix\.([\w-]+)\s*\}\}$/.exec(raw[0]) : null;
+  const mref = raw.length === 1 ? /^\$\{\{\s*matrix\.([\w-]+)\s*(?:\|\|\s*'([^']+)')?\s*\}\}$/.exec(raw[0]) : null;
   if (mref && matrix) {
     const v = toVarName(mref[1]);
-    const dropped = new Set<string>();
+    const fallback = mref[2] ? platformOf(mref[2]) : "other";
+    const split: Record<Platform | "linux" | "other", Obj[]> = { linux: [], windows: [], macos: [], other: [] };
     for (const entry of matrix) {
-      if (!entry[v]) continue;
-      const values = (entry[v] as string[]).filter((os) => (LINUX.test(os) ? true : (dropped.add(os), false)));
-      entry[v] = values;
+      if (!entry[v]) {
+        split[fallback].push(entry);
+        continue;
+      }
+      const byPlatform = new Map<Platform | "linux" | "other", string[]>();
+      for (const os of entry[v] as string[]) byPlatform.set(platformOf(os), [...(byPlatform.get(platformOf(os)) ?? []), os]);
+      for (const [platform, values] of byPlatform) split[platform].push({ ...entry, [v]: values });
     }
-    const kept = matrix.filter((e) => !e[v] || (e[v] as string[]).length);
-    matrix.splice(0, matrix.length, ...kept);
-    if (!dropped.size) {
-      findings.push({ feature, status: "clean", reason: "All matrix legs are Linux → GitLab.com shared Linux runners" });
-      return undefined;
+    matrix.splice(0, matrix.length, ...split.linux);
+    const variants: PlatformVariant[] = (["windows", "macos"] as const)
+      .filter((p) => split[p].length)
+      .map((p) => ({ platform: p, suffix: p, ...PLATFORMS[p], matrix: split[p] }));
+    const notes: string[] = [];
+    if (variants.length) {
+      notes.push(`${variants.map((x) => x.platform === "windows" ? "Windows" : "macOS").join(" and ")} legs → sibling job${variants.length > 1 ? "s" : ""} with GitLab.com runner \`tags\` (Windows runners are beta and use PowerShell; macOS needs Premium)`);
     }
-    todos.push(`TODO: ${[...dropped].join(", ")} legs were dropped from the matrix; they need GitLab Windows/macOS runners (tags)`);
-    findings.push({ feature, status: "manual", reason: `${[...dropped].join(", ")} legs need GitLab Windows (beta) or macOS (Premium) runners; add separate jobs with \`tags\`` });
-    return undefined;
+    if (split.other.length) {
+      const labels = [...new Set(split.other.flatMap((e) => (e[v] as string[] | undefined) ?? [mref[2] ?? "(none)"]))];
+      notes.push(`legs on ${labels.join(", ")} were dropped; register a GitLab Runner with matching tags`);
+      todos.push(`TODO: matrix legs on ${labels.join(", ")} were dropped; they need a runner with matching tags`);
+    }
+    findings.push(
+      notes.length
+        ? { feature, status: "manual", reason: notes.join("; ") }
+        : { feature, status: "clean", reason: "All matrix legs are Linux → GitLab.com shared Linux runners" },
+    );
+    return { variants, noLinuxLegs: !split.linux.length };
   }
   if (raw.some((r) => r.includes("${{"))) {
     findings.push({ feature, status: "manual", reason: "Runner chosen by expression; pick GitLab runner tags per job" });
-    return undefined;
+    return { variants: [] };
   }
   const first = raw[0] ?? "ubuntu-latest";
   if (raw.includes("self-hosted")) {
     const tags = raw.filter((r) => r !== "self-hosted");
     findings.push({ feature, status: "manual", reason: "Self-hosted runner → register a GitLab Runner with matching `tags`" });
-    return tags.length ? tags : undefined;
+    return { tags: tags.length ? tags : undefined, variants: [] };
   }
-  if (/windows/i.test(first)) {
-    findings.push({ feature, status: "manual", reason: "→ `tags: [saas-windows-medium-amd64]`; GitLab.com Windows runners are in beta and default to PowerShell" });
-    return ["saas-windows-medium-amd64"];
-  }
-  if (/macos/i.test(first)) {
-    findings.push({ feature, status: "manual", reason: "→ `tags: [saas-macos-medium-m1]`; macOS runners need GitLab Premium or Ultimate" });
-    return ["saas-macos-medium-m1"];
+  const platform = platformOf(first);
+  if (platform === "windows" || platform === "macos") {
+    findings.push({
+      feature,
+      status: "manual",
+      reason: platform === "windows"
+        ? "→ `tags: [saas-windows-medium-amd64]`; GitLab.com Windows runners are in beta and default to PowerShell"
+        : "→ `tags: [saas-macos-medium-m1]`; macOS runners need GitLab Premium or Ultimate",
+    });
+    return { tags: PLATFORMS[platform].tags, platform, variants: [] };
   }
   if (/arm/i.test(first)) {
     findings.push({ feature, status: "manual", reason: "ARM → `tags: [saas-linux-small-arm64]`; check your image supports arm64" });
-    return ["saas-linux-small-arm64"];
+    return { tags: ["saas-linux-small-arm64"], variants: [] };
   }
-  if (LINUX.test(first)) {
-    const large = /(\d+)-?core/i.exec(first);
-    if (large) {
+  if (platform === "linux") {
+    if (/(\d+)-?core/i.test(first)) {
       findings.push({ feature, status: "manual", reason: "Larger runner → `tags: [saas-linux-large-amd64]` (or medium/xlarge); billed at a higher cost factor" });
-      return ["saas-linux-large-amd64"];
+      return { tags: ["saas-linux-large-amd64"], variants: [] };
     }
     findings.push({ feature, status: "clean", reason: "→ GitLab.com shared Linux runners (no tags needed)" });
-    return undefined;
+    return { variants: [] };
   }
   findings.push({ feature, status: "manual", reason: "Unknown runner label → register a GitLab Runner with matching `tags`" });
-  return raw;
+  return { tags: raw, variants: [] };
 }
 
 export function convertPermissions(perms: unknown, findings: Finding[], scope: string) {
@@ -269,12 +333,12 @@ export function convertJob(id: string, job: Obj, ctx: ExprContext, defaults: Obj
     });
     todos.push(`TODO: was a call to reusable workflow ${job.uses}; convert it and include it here`);
     body.trigger = { include: local ? job.uses.replace(/^\.\/\.github\/workflows\//, ".gitlab/ci/") : "TODO.yml" };
-    return { body, needs: asList(job.needs).map((n) => nameOf(String(n))), script: [], afterScript: [], todos, findings };
+    return { body, needs: asList(job.needs).map((n) => nameOf(String(n))), script: [], afterScript: [], todos, findings, variants: [] };
   }
 
   const strategy = isObj(job.strategy) ? job.strategy : {};
   const matrix = convertMatrix(strategy, ctx, findings);
-  const tags = convertRunsOn(job["runs-on"], matrix, findings, todos);
+  const runsOn = convertRunsOn(job["runs-on"], matrix, findings, todos);
 
   if (isObj(job.env)) {
     const issues: string[] = [];
@@ -419,11 +483,18 @@ export function convertJob(id: string, job: Obj, ctx: ExprContext, defaults: Obj
     findings.push({ feature: "environment", status: "clean", reason: "→ `environment:` (protection rules/approvals are configured in project settings)" });
   }
 
-  body.image = image;
+  if (runsOn.platform) {
+    // The whole job runs on Windows/macOS: no container image there.
+    const p = PLATFORMS[runsOn.platform];
+    if (p.image) body.image = p.image;
+    todos.push(p.todo);
+  } else {
+    body.image = image;
+  }
   if (build.services.length) body.services = build.services;
-  if (tags) body.tags = tags;
+  if (runsOn.tags) body.tags = runsOn.tags;
   if (Object.keys(build.variables).length) body.variables = build.variables;
-  if (matrix) body.parallel = { matrix };
+  if (matrix?.length) body.parallel = { matrix };
   if (timeout) body.timeout = timeout;
   if (allowFailure) body.allow_failure = true;
   if (environment) body.environment = environment;
@@ -439,6 +510,8 @@ export function convertJob(id: string, job: Obj, ctx: ExprContext, defaults: Obj
     afterScript: build.afterScript,
     todos,
     findings,
+    variants: runsOn.variants,
+    noLinuxLegs: runsOn.noLinuxLegs,
   };
   if (build.artifacts) {
     const { name, paths, exclude, expire_in, when } = build.artifacts;

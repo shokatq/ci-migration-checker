@@ -21,7 +21,6 @@ lint:
     # TODO: install golangci-lint v2.11 or use the golangci/golangci-lint image
     - golangci-lint run --verbose
 
-# TODO: macos-latest legs were dropped from the matrix; they need GitLab Windows/macOS runners (tags)
 test:
   stage: gin
   image: golang:$GO
@@ -35,6 +34,42 @@ test:
     matrix:
       - OS:
           - ubuntu-latest
+        GO:
+          - "1.26"
+          - "1.27"
+        TEST_TAGS:
+          - ""
+          - -tags nomsgpack
+          - --ldflags="-checklinkname=0" -tags sonic
+          - -tags go_json
+          - -race
+  cache:
+    key:
+      files:
+        - go.sum
+    paths:
+      - $GO_BUILD
+  script:
+    # TODO: uses: actions/cache@v6: → `cache:` with the same paths and key; GitLab only caches paths inside the project dir; point the tool's cache directory there with an env var; `restore-keys` → `cache:fallback_keys` if you need them
+    - make test
+    # TODO: Upload coverage to Codecov (uses: codecov/codecov-action@v7): → run the Codecov CLI in `script` with CODECOV_TOKEN, or use GitLab's `artifacts:reports:coverage_report`
+
+# TODO: macOS runners need GitLab Premium or Ultimate; pick the macOS image and install the toolchain (e.g. with Homebrew) in script
+test-macos:
+  stage: gin
+  image: macos-15-xcode-16
+  tags:
+    - saas-macos-medium-m1
+  needs:
+    - lint
+  variables:
+    GO111MODULE: on
+    TESTTAGS: $TEST_TAGS
+    GOPROXY: https://proxy.golang.org
+  parallel:
+    matrix:
+      - OS:
+          - macos-latest
         GO:
           - "1.26"
           - "1.27"

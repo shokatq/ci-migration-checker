@@ -27,18 +27,6 @@ tests:
           - "3.14"
       - PYTHON:
           - 3.14t
-      - NAME:
-          - Windows
-        PYTHON:
-          - "3.14"
-        OS:
-          - windows-latest
-      - NAME:
-          - Mac
-        PYTHON:
-          - "3.14"
-        OS:
-          - macos-latest
       - PYTHON:
           - "3.13"
       - PYTHON:
@@ -63,6 +51,61 @@ tests:
           - "3.11"
         TOX:
           - tests-dev
+  cache:
+    key:
+      files:
+        - uv.lock
+    paths:
+      - .cache/uv/
+  script:
+    - pip install uv
+    # TODO: expression `matrix.tox || format('py{0}', matrix.python)` needs rewriting as shell logic
+    - export TOX_ENV="${{ matrix.tox || format('py{0}', matrix.python) }}"
+    - uv run --locked --no-default-groups --group dev tox run
+
+# TODO: Windows runners (beta) run PowerShell in a VM, not bash in a container; port the script and install the toolchain
+tests-windows:
+  stage: flask-tests
+  tags:
+    - saas-windows-medium-amd64
+  variables:
+    UV_CACHE_DIR: $CI_PROJECT_DIR/.cache/uv
+  parallel:
+    matrix:
+      - NAME:
+          - Windows
+        PYTHON:
+          - "3.14"
+        OS:
+          - windows-latest
+  cache:
+    key:
+      files:
+        - uv.lock
+    paths:
+      - .cache/uv/
+  script:
+    - pip install uv
+    # TODO: expression `matrix.tox || format('py{0}', matrix.python)` needs rewriting as shell logic
+    - export TOX_ENV="${{ matrix.tox || format('py{0}', matrix.python) }}"
+    - uv run --locked --no-default-groups --group dev tox run
+
+# TODO: macOS runners need GitLab Premium or Ultimate; pick the macOS image and install the toolchain (e.g. with Homebrew) in script
+tests-macos:
+  stage: flask-tests
+  image: macos-15-xcode-16
+  tags:
+    - saas-macos-medium-m1
+  variables:
+    UV_CACHE_DIR: $CI_PROJECT_DIR/.cache/uv
+  parallel:
+    matrix:
+      - NAME:
+          - Mac
+        PYTHON:
+          - "3.14"
+        OS:
+          - macos-latest
   cache:
     key:
       files:

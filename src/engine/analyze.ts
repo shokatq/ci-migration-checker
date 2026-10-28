@@ -83,6 +83,8 @@ export function analyze(files: WorkflowFile[]): Report {
   const workflows: WorkflowReport[] = [];
   const jobs: JobReport[] = [];
   const emitJobs: EmitJob[] = [];
+  /** GitLab job name → every job emitted for it (itself plus Windows/macOS siblings). */
+  const emittedAs = new Map<string, string[]>();
   const workflowRules: Rule[] = [];
   let topVariables: Record<string, string> | undefined;
   let topDefault: Obj | undefined;
@@ -163,7 +165,22 @@ export function analyze(files: WorkflowFile[]): Report {
         if (conc.interruptible && body.interruptible === undefined) body.interruptible = true;
       }
 
-      emitJobs.push({ name, body, script: converted.script, afterScript: converted.afterScript, todos: converted.todos });
+      const emitted: string[] = [];
+      if (!converted.noLinuxLegs) {
+        emitJobs.push({ name, body, script: converted.script, afterScript: converted.afterScript, todos: converted.todos });
+        emitted.push(name);
+      }
+      for (const v of converted.variants) {
+        const vBody: Obj = { ...structuredClone(body), tags: v.tags, parallel: { matrix: structuredClone(v.matrix) } };
+        if (v.image) vBody.image = v.image;
+        else delete vBody.image;
+        // Linux-only setup (container services, Docker caches) doesn't carry over to these VMs.
+        delete vBody.services;
+        const vName = `${name}-${v.suffix}`;
+        emitJobs.push({ name: vName, body: vBody, script: converted.script, afterScript: converted.afterScript, todos: [v.todo] });
+        emitted.push(vName);
+      }
+      emittedAs.set(name, emitted);
       jobs.push({
         workflow: wf.name,
         id,
@@ -174,6 +191,12 @@ export function analyze(files: WorkflowFile[]): Report {
     }
     workflows.push({ path: wf.path, name: wf.name, findings });
   });
+
+  // A GitHub job that `needs` a matrix job waits for every leg, so depend on the siblings too.
+  for (const job of emitJobs) {
+    const needs = job.body.needs as string[] | undefined;
+    if (needs?.length) job.body.needs = needs.flatMap((n) => emittedAs.get(n) ?? [n]);
+  }
 
   if (needsDuplicateGuard && workflowRules.length) workflowRules.unshift(DUPLICATE_PIPELINE_GUARD);
 
