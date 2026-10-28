@@ -6,3 +6,10 @@ coverage/
 next-env.d.ts
 .env*.local
 .vercel
+
+# Personal files kept alongside the project; never commit
+resumes/
+reports/
+research_notes/
+linkedin_article_*.md
+.claude/
