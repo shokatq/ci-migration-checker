@@ -9,25 +9,42 @@
 
 Everything runs in the browser. There is no backend and nothing is stored.
 
-<!-- TODO: add screenshot: docs/screenshot.png (report for gin-gonic/gin) -->
+![Report for gin-gonic/gin: readiness score, CI-minutes estimate and per-workflow findings](docs/screenshot.png)
 
 ## Why this exists
 
-I wrote [an analysis of GitLab's public financials](#) <!-- TODO: article link --> arguing that one reason GitLab converts so few of its free users is that **switching CI is the hardest part of leaving GitHub**. Repos and issues move with an importer. CI pipelines have to be rewritten by hand. This tool answers the first question a team asks before a migration: *how much of our CI would we have to rewrite?*
+I wrote [an analysis of GitLab's public financials](https://www.linkedin.com/pulse/gitlab-doesnt-have-demand-problem-has-three-leaks-engineers-shokat-v8alf/) arguing that one reason GitLab converts so few of its free users is that **switching CI is the hardest part of leaving GitHub**. Repos and issues move with an importer. CI pipelines have to be rewritten by hand. This tool answers the first question a team asks before a migration: *how much of our CI would we have to rewrite?*
 
 ## How well does it do on real repos?
 
-The test suite runs the converter on unmodified workflows from popular projects ([sources](src/engine/__fixtures__/README.md)). The generated files are checked in under [`src/engine/__fixtures__/expected/`](src/engine/__fixtures__/expected/), so you can read exactly what it produces.
+**Test fixtures.** The test suite runs the converter on unmodified workflows from popular projects ([sources](src/engine/__fixtures__/README.md)). The generated files are checked in under [`src/engine/__fixtures__/expected/`](src/engine/__fixtures__/expected/), so you can read exactly what it produces.
 
 | Workflow | Score | Clean | Manual | No equivalent |
 | --- | ---: | ---: | ---: | ---: |
 | expressjs/express `ci.yml` | 88 | 21 | 7 | 0 |
+| vitejs/vite `ci.yml` | 86 | 33 | 13 | 0 |
 | pallets/flask `tests.yaml` | 85 | 12 | 5 | 0 |
 | gin-gonic/gin `gin.yml` | 82 | 11 | 6 | 0 |
-| vitejs/vite `ci.yml` | 80 | 32 | 13 | 3 |
 | fastapi/fastapi `test.yml` | 75 | 38 | 28 | 3 |
 
-What usually needs a person: Windows/macOS matrix legs, job outputs (`needs.x.outputs`), `paths-ignore`, schedules (they live in GitLab settings, not YAML), and third-party actions with no GitLab counterpart.
+**Survey of 12 more repos** (every workflow in each, 490 jobs in total, run with `npm run survey`). Every one produced valid YAML, with no crashes or parse errors.
+
+| Repo | Workflows | Jobs | Score |
+| --- | ---: | ---: | ---: |
+| django/django | 17 | 33 | 88 |
+| rails/rails | 9 | 9 | 83 |
+| prettier/prettier | 17 | 23 | 81 |
+| psf/requests | 8 | 13 | 80 |
+| tailwindlabs/tailwindcss | 4 | 11 | 80 |
+| sveltejs/svelte | 4 | 8 | 74 |
+| astral-sh/ruff | 26 | 105 | 73 |
+| supabase/supabase | 57 | 72 | 73 |
+| nestjs/nest | 2 | 2 | 72 |
+| vercel/next.js | 30 | 97 | 66 |
+| denoland/deno | 11 | 51 | 64 |
+| microsoft/vscode | 14 | 66 | 64 |
+
+Library-style projects with Linux test matrices score highest. Large products score lowest because of what makes them large: Windows/macOS builds, custom runner labels, reusable workflows and local composite actions, and PowerShell steps. The most common manual items across all of them were runner choice, `node-version-file`, job outputs, step-level `if:` conditions and OIDC permissions.
 
 ## What it maps
 
@@ -52,7 +69,7 @@ What usually needs a person: Windows/macOS matrix legs, job outputs (`needs.x.ou
 | `${{ github.sha }}`, `$GITHUB_SHA`, … | `$CI_COMMIT_SHA`, … | ~20 context values and env vars are renamed. |
 | `timeout-minutes`, `continue-on-error`, `environment`, `concurrency` | `timeout`, `allow_failure`, `environment`, `interruptible` / `resource_group` | |
 
-About 40 well-known actions are in the catalog ([`src/engine/actions.ts`](src/engine/actions.ts)), including Docker build/push, Codecov, GitHub Pages, CodeQL and release actions, each with a specific suggestion. Unknown actions are marked *No equivalent*.
+About 60 well-known actions are in the catalog ([`src/engine/actions.ts`](src/engine/actions.ts)), including Docker build/push, Codecov, GitHub Pages, CodeQL and release actions, each with a specific suggestion. Unknown actions are marked *No equivalent*.
 
 ### Scoring
 
@@ -98,6 +115,7 @@ Open http://localhost:3000. Other scripts:
 | `npm run lint` | ESLint + TypeScript type check |
 | `npm run build` | Static export to `out/` |
 | `npm run convert -- path/to/workflow.yml` | CLI: prints the `.gitlab-ci.yml` and a summary of findings |
+| `npm run survey -- <dir>` | Runs the converter over a folder with one subfolder of workflows per repo and prints a summary table |
 
 ## Project structure
 

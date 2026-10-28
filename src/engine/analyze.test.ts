@@ -149,6 +149,29 @@ jobs:
     expect(finding(report, "t", "uses: some-org/unknown-action@v1").status).toBe("none");
   });
 
+  it("keeps artifacts on failure via artifacts:when and lets the first toolchain win", () => {
+    const { report, ci } = convert(`
+on: push
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - uses: actions/setup-node@v4
+        if: github.ref == 'refs/heads/main'
+        with: { node-version: 24, cache: npm }
+      - run: npm test
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with: { name: logs, path: logs/ }
+`);
+    expect(ci.t.image).toBe("node:20");
+    expect(ci.t.cache).toEqual({ key: { files: ["package-lock.json"] }, paths: [".npm/"] });
+    expect(ci.t.artifacts).toEqual({ name: "logs", paths: ["logs/"], when: "on_failure" });
+    expect(finding(report, "t", /upload-artifact/).status).toBe("clean");
+  });
+
   it("renames GitHub env vars and strips sudo", () => {
     const { ci } = convert(`
 on: push

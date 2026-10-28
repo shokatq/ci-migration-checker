@@ -25,8 +25,8 @@ interface ActionContext {
   with: With;
   job: JobBuild;
   ctx: ExprContext;
-  /** `if: always()` on the step; artifacts should be kept on failure too. */
-  always: boolean;
+  /** From the step's `if: always()` / `if: failure()`; decides `artifacts:when`. */
+  when?: "always" | "on_failure";
 }
 
 type Handler = (a: ActionContext) => { status: Status; reason: string };
@@ -47,18 +47,27 @@ function runtime(name: string, image: string, versionKey: string, fileKey?: stri
   return ({ with: w, job, ctx }) => {
     const notes: string[] = [];
     if (!w[versionKey] && fileKey && w[fileKey]) {
-      job.runtimes.set(name, `${image}:latest`);
+      setRuntime(job, name, `${image}:latest`);
       return { status: "manual", reason: `Version comes from \`${str(w[fileKey])}\`; pin the matching tag on the \`${image}\` image` };
     }
     const tag = imageTag(w[versionKey], ctx);
-    job.runtimes.set(name, `${image}:${tag}`);
+    setRuntime(job, name, `${image}:${tag}`);
     if (!w[versionKey]) notes.push(`no version given, using \`${image}:latest\``);
     return { status: notes.length ? "manual" : "clean", reason: [`Becomes the job image \`${image}:${tag}\``, ...notes].join("; ") };
   };
 }
 
+/**
+ * The first setup step for a runtime wins: later ones are usually conditional
+ * extras (e.g. "use Node 24 for the build step") rather than the job's main version.
+ */
+function setRuntime(job: JobBuild, name: string, image: string) {
+  if (!job.runtimes.has(name)) job.runtimes.set(name, image);
+}
+
 function addCache(job: JobBuild, files: string[], paths: string[], variables: Record<string, string> = {}) {
-  job.cache.push({ key: { files }, paths });
+  const entry = { key: { files }, paths };
+  if (!job.cache.some((c) => JSON.stringify(c) === JSON.stringify(entry))) job.cache.push(entry);
   Object.assign(job.variables, variables);
 }
 
@@ -123,7 +132,7 @@ const HANDLERS: Record<string, Handler> = {
   "actions/setup-python": withPackageCache((a) => {
     const v = str(a.with["python-version"]);
     if (v.startsWith("pypy")) {
-      a.job.runtimes.set("python", `pypy:${v.replace(/^pypy-?/, "") || "3"}`);
+      setRuntime(a.job, "python", `pypy:${v.replace(/^pypy-?/, "") || "3"}`);
       return { status: "clean", reason: "PyPy → the `pypy` image" };
     }
     const r = runtime("python", "python", "python-version", "python-version-file")(a);
@@ -145,7 +154,7 @@ const HANDLERS: Record<string, Handler> = {
   },
   "dtolnay/rust-toolchain": ({ ref, with: w, job, ctx }) => {
     const toolchain = str(w.toolchain) || ref;
-    job.runtimes.set("rust", `rust:${imageTag(toolchain, ctx)}`);
+    setRuntime(job, "rust", `rust:${imageTag(toolchain, ctx)}`);
     const components = str(w.components).split(/[,\s]+/).filter(Boolean);
     if (components.length) job.script.push({ cmd: `rustup component add ${components.join(" ")}` });
     if (toolchain === "nightly") {
@@ -157,6 +166,14 @@ const HANDLERS: Record<string, Handler> = {
   "swatinem/rust-cache": ({ job }) => {
     addCache(job, ["Cargo.lock"], ["target/", ".cargo/"], { CARGO_HOME: "$CI_PROJECT_DIR/.cargo" });
     return { status: "clean", reason: "→ `cache:` for target/ and CARGO_HOME, keyed on Cargo.lock" };
+  },
+  // Installs pnpm and, with `runtime: node@<version>`, Node itself.
+  "pnpm/setup": ({ with: w, job, ctx }) => {
+    const node = /^node@(.+)$/.exec(str(w.runtime));
+    if (node) setRuntime(job, "node", `node:${imageTag(node[1], ctx)}`);
+    if (!job.script.some((l) => l.cmd === "corepack enable")) job.script.push({ cmd: "corepack enable" });
+    if (w.cache) addCache(job, ...PACKAGE_CACHES.pnpm());
+    return { status: "clean", reason: `→ \`corepack enable\`${node ? ` on the \`node:${imageTag(node[1], ctx)}\` image` : ""}${w.cache ? " + pnpm store cache" : ""}` };
   },
   "pnpm/action-setup": ({ with: w, job }) => {
     const v = str(w.version);
@@ -203,7 +220,7 @@ const HANDLERS: Record<string, Handler> = {
     job.cache.push(entry);
     return { status, reason: ["→ `cache:` with the same paths and key", ...notes].join("; ") };
   },
-  "actions/upload-artifact": ({ with: w, job, ctx, always }) => {
+  "actions/upload-artifact": ({ with: w, job, ctx, when }) => {
     const all = lines(w.path).map((p) => translateInline(p, ctx).text);
     const paths = all.filter((p) => !p.startsWith("!"));
     const exclude = all.filter((p) => p.startsWith("!")).map((p) => p.slice(1));
@@ -212,7 +229,7 @@ const HANDLERS: Record<string, Handler> = {
     if (exclude.length) a.exclude = [...(a.exclude ?? []), ...exclude];
     if (w.name && !a.name) a.name = translateInline(str(w.name), ctx).text;
     if (w["retention-days"]) a.expire_in = `${str(w["retention-days"])} day${str(w["retention-days"]) === "1" ? "" : "s"}`;
-    if (always) a.when = "always";
+    if (when) a.when = when;
     job.artifacts = a;
     const outside = paths.some(outsideProject);
     return outside
@@ -261,6 +278,33 @@ const HANDLERS: Record<string, Handler> = {
   "tj-actions/changed-files": manual("→ `rules:changes` on the jobs that should be skipped"),
   "dorny/paths-filter": manual("→ `rules:changes` on the jobs that should be skipped"),
 
+  "dsherret/rust-toolchain-file": ({ job }) => {
+    setRuntime(job, "rust", "rust:latest");
+    return { status: "clean", reason: "→ the `rust` image; rustup reads rust-toolchain.toml on first use" };
+  },
+  "shivammathur/setup-php": runtime("php", "php", "php-version"),
+  "hashicorp/setup-terraform": runtime("terraform", "hashicorp/terraform", "terraform_version"),
+  "conda-incubator/setup-miniconda": ({ job }) => {
+    setRuntime(job, "python", "continuumio/miniconda3:latest");
+    return { status: "manual", reason: "→ the `continuumio/miniconda3` image; create/activate the environment in `script`" };
+  },
+  "gradle/actions": manual("→ a `gradle` or `eclipse-temurin` image; cache `.gradle/` via `GRADLE_USER_HOME=$CI_PROJECT_DIR/.gradle`"),
+  "pyo3/maturin-action": manual("→ the `ghcr.io/pyo3/maturin` image and `maturin build` in `script`"),
+  "taiki-e/install-action": manual("→ install the tool in `script` (`cargo binstall` or the tool's release binary)"),
+  "mlugg/setup-zig": manual("→ download Zig in `script` or use a community Zig image"),
+  "goreleaser/goreleaser-action": manual("→ the `goreleaser/goreleaser` image running `goreleaser release` in a tag pipeline, with GITLAB_TOKEN"),
+  "aquasecurity/trivy-action": manual("→ GitLab Container Scanning (uses Trivy) or the `aquasec/trivy` image in `script`"),
+  "aws-actions/configure-aws-credentials": manual("OIDC → `id_tokens:` plus `aws sts assume-role-with-web-identity` in `script`"),
+  "azure/login": manual("OIDC → `id_tokens:` plus `az login --federated-token` in `script`"),
+  "google-github-actions/auth": manual("OIDC → `id_tokens:` plus Workload Identity Federation in `script`"),
+  "slackapi/slack-github-action": manual("→ `curl` the Slack webhook in `script` (store the URL as a masked variable)"),
+  "vercel/setup-turborepo-remote-cache-action": manual("→ set TURBO_API/TURBO_TOKEN/TURBO_TEAM variables for your remote cache"),
+  "devcontainers/ci": manual("→ build the dev container image and use it as the job `image`"),
+
+  "actions/create-github-app-token": none("GitHub App tokens are GitHub-specific; use a project/group access token"),
+  "actions/attest": none("GitHub artifact attestations; GitLab can generate SLSA provenance for artifacts (`RUNNER_GENERATE_ARTIFACTS_METADATA`)"),
+  "actions/attest-build-provenance": none("GitHub artifact attestations; GitLab can generate SLSA provenance for artifacts (`RUNNER_GENERATE_ARTIFACTS_METADATA`)"),
+  "dessant/lock-threads": none("GitHub issue/PR automation; use gitlab-triage on a schedule"),
   "actions/github-script": none("Scripts against the GitHub API; rewrite against the GitLab API (curl/glab) if still needed"),
   "actions/labeler": none("GitHub issue/PR automation; no CI equivalent (use GitLab triage bots/webhooks)"),
   "actions/stale": none("GitHub issue/PR automation; use gitlab-triage on a schedule"),
@@ -280,7 +324,7 @@ export function convertUses(
   w: With,
   job: JobBuild,
   ctx: ExprContext,
-  always: boolean,
+  when?: "always" | "on_failure",
 ): Finding {
   const feature = `uses: ${uses.replace(/@[0-9a-f]{40}$/, "@<sha>")}`;
   if (uses.startsWith("./")) {
@@ -298,5 +342,5 @@ export function convertUses(
       reason: "Not in the checker's catalog of known actions; reimplement in shell or look for a GitLab CI/CD Catalog component",
     };
   }
-  return { feature, ...handler({ ref, with: w, job, ctx, always }) };
+  return { feature, ...handler({ ref, with: w, job, ctx, when }) };
 }

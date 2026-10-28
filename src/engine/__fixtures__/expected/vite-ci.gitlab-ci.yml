@@ -32,13 +32,14 @@ changed:
     - 'echo "TODO: port this job"'
 
 # TODO: macos-latest, windows-latest legs were dropped from the matrix; they need GitLab Windows/macOS runners (tags)
-# TODO: GitHub's ubuntu runner has many tools preinstalled; pick an image with what this job needs
 # TODO: job condition not converted: needs.changed.outputs.should_skip != 'true'
 test:
   stage: vite-ci
-  image: ubuntu:24.04
+  image: node:$NODE_VERSION
   needs:
     - changed
+  variables:
+    npm_config_store_dir: $CI_PROJECT_DIR/.pnpm-store
   parallel:
     matrix:
       - OS:
@@ -50,14 +51,17 @@ test:
           - "26"
   timeout: 20 minutes
   cache:
-    key: ${{ runner.os }}-playwright-bin-v1-$PLAYWRIGHT_VERSION
-    paths:
-      - $PLAYWRIGHT_BROWSERS_PATH
+    - key:
+        files:
+          - pnpm-lock.yaml
+      paths:
+        - .pnpm-store/
+    - key: ${{ runner.os }}-playwright-bin-v1-$PLAYWRIGHT_VERSION
+      paths:
+        - $PLAYWRIGHT_BROWSERS_PATH
   script:
     # TODO: only run when `matrix.node_version != '20'`
-    # TODO: Install pnpm and node ${{ matrix.node_version }} (uses: pnpm/setup@<sha>): Not in the checker's catalog of known actions; reimplement in shell or look for a GitLab CI/CD Catalog component
-    # TODO: only run when `matrix.node_version == '20'`
-    # TODO: Install pnpm and node 24 for builds (uses: pnpm/setup@<sha>): Not in the checker's catalog of known actions; reimplement in shell or look for a GitLab CI/CD Catalog component
+    - corepack enable
     # TODO: only run when `runner.os != 'Windows'`
     # TODO: `$GITHUB_ENV` → `export NAME=value` (all script lines share one shell)
     - |-
@@ -100,13 +104,20 @@ test-failed:
   script:
     - echo "Build & Test Failed"
 
-# TODO: GitHub's ubuntu runner has many tools preinstalled; pick an image with what this job needs
 lint:
   stage: vite-ci
-  image: ubuntu:24.04
+  image: node:24
+  variables:
+    npm_config_store_dir: $CI_PROJECT_DIR/.pnpm-store
   timeout: 10 minutes
+  cache:
+    key:
+      files:
+        - pnpm-lock.yaml
+    paths:
+      - .pnpm-store/
   script:
-    # TODO: Install pnpm and node 24 (uses: pnpm/setup@<sha>): Not in the checker's catalog of known actions; reimplement in shell or look for a GitLab CI/CD Catalog component
+    - corepack enable
     - pnpm run build
     - pnpm run lint
     - pnpm format && git diff --exit-code

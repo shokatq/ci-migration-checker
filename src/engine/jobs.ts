@@ -309,7 +309,7 @@ export function convertJob(id: string, job: Obj, ctx: ExprContext, defaults: Obj
     // Index of this step's first script line, so comments land above the whole step.
     const stepStart = target.length;
     if (typeof step.uses === "string") {
-      finding = convertUses(step.uses, isObj(step.with) ? step.with : {}, build, ctx, always || onFailure);
+      finding = convertUses(step.uses, isObj(step.with) ? step.with : {}, build, ctx, always ? "always" : onFailure ? "on_failure" : undefined);
       if (step.name) finding.feature = `${label(String(step.name))} (${finding.feature})`;
       if (finding.status !== "clean") {
         target.splice(stepStart, 0, { comment: `TODO: ${finding.feature}: ${finding.reason}` });
@@ -347,7 +347,9 @@ export function convertJob(id: string, job: Obj, ctx: ExprContext, defaults: Obj
       continue;
     }
 
-    if (always || onFailure) {
+    if ((always || onFailure) && typeof step.uses === "string" && /^actions\/upload-artifact@/i.test(step.uses)) {
+      finding.reason += `; \`if: ${ifText}\` → \`artifacts:when: ${always ? "always" : "on_failure"}\``;
+    } else if (always || onFailure) {
       finding.status = worst([finding.status, "manual"]);
       finding.reason += `; \`if: ${ifText}\` → moved to \`after_script\` (runs in a separate shell, so exported variables aren't available)`;
     } else if (ifRaw != null) {
