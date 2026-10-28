@@ -1,6 +1,6 @@
 /** One GitHub Actions job → one GitLab job plus findings. */
 import { convertUses, newJobBuild, type JobBuild } from "./actions";
-import { conditionToRule, toVarName, translateInline, type ExprContext } from "./expressions";
+import { conditionToRule, conditionToShell, toVarName, translateInline, type ExprContext } from "./expressions";
 import type { Finding, Line, Rule, Status } from "./types";
 
 type Obj = Record<string, unknown>;
@@ -405,6 +405,15 @@ export function convertJob(id: string, job: Obj, ctx: ExprContext, defaults: Obj
       };
       const cmd = onFailure ? `if [ "$CI_JOB_STATUS" = "failed" ]; then\n${run.text.trimEnd()}\nfi` : run.text.trimEnd();
       stepLines.push({ cmd });
+      // Step condition → wrap the step (exports included) in a shell `if`.
+      // Lines aren't re-indented so heredocs inside `run:` keep working.
+      const sh = ifRaw != null ? conditionToShell(ifRaw, ctx) : undefined;
+      if (sh?.ok) {
+        const body = stepLines.map((l) => l.cmd).join("\n");
+        stepLines.splice(0, stepLines.length, { cmd: `if ${sh.cond}; then\n${body}\nfi` });
+        finding.reason = `${finding.reason === "→ `script:` line" ? "→ `script:`" : finding.reason}; \`if: ${ifText}\` → shell \`if ${sh.cond}\``;
+        ifRaw = undefined;
+      }
       if (status === "manual") stepLines[0].comment = `TODO: ${[...new Set(stepIssues)].join("; ")}`;
       target.push(...stepLines);
     } else {

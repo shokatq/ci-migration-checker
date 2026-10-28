@@ -24,10 +24,10 @@ I wrote [an analysis of GitLab's public financials](https://www.linkedin.com/pul
 | Workflow | Score | Clean | Manual | No equivalent |
 | --- | ---: | ---: | ---: | ---: |
 | expressjs/express `ci.yml` | 88 | 21 | 7 | 0 |
-| vitejs/vite `ci.yml` | 86 | 33 | 13 | 0 |
+| vitejs/vite `ci.yml` | 87 | 34 | 12 | 0 |
 | pallets/flask `tests.yaml` | 85 | 12 | 5 | 0 |
 | gin-gonic/gin `gin.yml` | 82 | 11 | 6 | 0 |
-| fastapi/fastapi `test.yml` | 75 | 38 | 28 | 3 |
+| fastapi/fastapi `test.yml` | 79 | 43 | 23 | 3 |
 
 **Survey of 12 more repos** (every workflow in each, 490 jobs in total, run with `npm run survey`). Every one produced valid YAML in which every `needs` points at a real job, with no crashes or parse errors.
 
@@ -35,18 +35,18 @@ I wrote [an analysis of GitLab's public financials](https://www.linkedin.com/pul
 | --- | ---: | ---: | ---: |
 | django/django | 17 | 33 | 88 |
 | rails/rails | 9 | 9 | 83 |
-| prettier/prettier | 17 | 23 | 81 |
-| psf/requests | 8 | 13 | 80 |
-| tailwindlabs/tailwindcss | 4 | 11 | 80 |
+| prettier/prettier | 17 | 23 | 83 |
+| tailwindlabs/tailwindcss | 4 | 11 | 83 |
+| psf/requests | 8 | 13 | 81 |
 | sveltejs/svelte | 4 | 8 | 74 |
 | astral-sh/ruff | 26 | 105 | 73 |
 | supabase/supabase | 57 | 72 | 73 |
 | nestjs/nest | 2 | 2 | 72 |
-| vercel/next.js | 30 | 97 | 66 |
-| denoland/deno | 11 | 51 | 64 |
-| microsoft/vscode | 14 | 66 | 64 |
+| denoland/deno | 11 | 51 | 68 |
+| microsoft/vscode | 14 | 66 | 68 |
+| vercel/next.js | 30 | 97 | 67 |
 
-Library-style projects with Linux test matrices score highest. Large products score lowest because of what makes them large: Windows/macOS builds, custom runner labels, reusable workflows and local composite actions, and PowerShell steps. The most common manual items across all of them were runner choice, `node-version-file`, job outputs, step-level `if:` conditions and OIDC permissions.
+Library-style projects with Linux test matrices score highest. Large products score lowest because of what makes them large: Windows/macOS builds, custom runner labels, reusable workflows and local composite actions, and PowerShell steps. The most common manual items across all of them were runner choice, `node-version-file`, job outputs (and step conditions that read them) and OIDC permissions.
 
 ## What it maps
 
@@ -67,7 +67,7 @@ Library-style projects with Linux test matrices score highest. Large products sc
 | `services` | `services` with aliases | Flagged when the job connects via `localhost` ports, since GitLab services are reachable by alias. |
 | `container` | `image` | |
 | `if:` on jobs | `rules:if` | A real expression parser handles `==`, `!=`, `&&`, `||`, `!`, `startsWith`/`endsWith`/`contains`, `github.ref`, `github.event_name` and status functions (`always()` → `when: always`). |
-| `if:` on steps | TODO comment, or `after_script` for `always()` / `failure()` | GitLab has no per-line conditions. |
+| `if:` on steps | a shell `if [ ... ]; then … fi` around the step's lines, or `after_script` for `always()` / `failure()` | Comparisons, `&&`/`||`/`!`, `startsWith`/`endsWith`/`contains`, refs and events become POSIX `sh` (tested by running them in a real shell). Conditions on step outputs or `runner.os` stay TODOs. |
 | `${{ github.sha }}`, `$GITHUB_SHA`, … | `$CI_COMMIT_SHA`, … | ~20 context values and env vars are renamed. |
 | `timeout-minutes`, `continue-on-error`, `environment`, `concurrency` | `timeout`, `allow_failure`, `environment`, `interruptible` / `resource_group` | |
 

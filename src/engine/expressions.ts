@@ -434,3 +434,115 @@ export function conditionToRule(raw: string | boolean, ctx: ExprContext): RuleRe
     return { ok: false, reason: e instanceof Error ? e.message : String(e) };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Step if: conditions → POSIX shell
+// ---------------------------------------------------------------------------
+
+/** Single-quoted shell literal; rejects values containing a quote. */
+function shellLit(value: string | number | boolean | null): string {
+  const s = value === null ? "" : String(value);
+  if (s.includes("'")) throw new Unsupported("string literal contains a single quote");
+  return `'${s}'`;
+}
+
+function shellVar(n: Node, ctx: ExprContext): string {
+  return `"${varRef(n, ctx)}"`;
+}
+
+function shellCompare(op: "==" | "!=", left: Node, right: Node, ctx: ExprContext): string {
+  if (left.type === "lit" && right.type !== "lit") [left, right] = [right, left];
+  const sh = op === "==" ? "=" : "!=";
+  if (right.type !== "lit") return `[ ${shellVar(left, ctx)} ${sh} ${shellVar(right, ctx)} ]`;
+  const lit = right.value;
+  if (isPath(left, "github.event_name")) {
+    const source = EVENT_TO_SOURCE[String(lit)];
+    if (!source) throw new Unsupported(`event \`${lit}\` has no GitLab pipeline source`);
+    return `[ "$CI_PIPELINE_SOURCE" ${sh} '${source}' ]`;
+  }
+  if (isPath(left, "github.ref") && typeof lit === "string") {
+    if (lit.startsWith("refs/heads/")) return `[ "$CI_COMMIT_BRANCH" ${sh} ${shellLit(lit.slice(11))} ]`;
+    if (lit.startsWith("refs/tags/")) return `[ "$CI_COMMIT_TAG" ${sh} ${shellLit(lit.slice(10))} ]`;
+    throw new Unsupported(`ref \`${lit}\` has no GitLab equivalent`);
+  }
+  return `[ ${shellVar(left, ctx)} ${sh} ${shellLit(lit)} ]`;
+}
+
+/** startsWith/endsWith/contains as a POSIX `case`, so no regex escaping is needed. */
+function shellMatch(name: string, args: Node[], ctx: ExprContext): string {
+  const [subject, needle] = args;
+  if (!subject || needle?.type !== "lit" || typeof needle.value !== "string") {
+    throw new Unsupported(`${name}() is only supported with a literal string`);
+  }
+  let target: string;
+  let value = needle.value;
+  if (isPath(subject, "github.ref") && name === "startsWith") {
+    if (value.startsWith("refs/tags/")) {
+      value = value.slice(10);
+      if (!value) return `[ -n "$CI_COMMIT_TAG" ]`;
+      target = `"$CI_COMMIT_TAG"`;
+    } else if (value.startsWith("refs/heads/")) {
+      value = value.slice(11);
+      target = `"$CI_COMMIT_BRANCH"`;
+    } else throw new Unsupported(`ref prefix \`${value}\` has no GitLab equivalent`);
+  } else {
+    target = shellVar(subject, ctx);
+  }
+  const pattern = name === "startsWith" ? `${shellLit(value)}*` : name === "endsWith" ? `*${shellLit(value)}` : `*${shellLit(value)}*`;
+  return `case ${target} in ${pattern}) true ;; *) false ;; esac`;
+}
+
+function shellCond(n: Node, ctx: ExprContext): string {
+  switch (n.type) {
+    case "bin": {
+      if (n.op === "&&" || n.op === "||") {
+        const wrap = (c: Node) => {
+          const s = shellCond(c, ctx);
+          return c.type === "bin" && (c.op === "&&" || c.op === "||") && c.op !== n.op ? `{ ${s}; }` : s;
+        };
+        return `${wrap(n.left)} ${n.op} ${wrap(n.right)}`;
+      }
+      if (n.op === "==" || n.op === "!=") return shellCompare(n.op, n.left, n.right, ctx);
+      throw new Unsupported(`operator \`${n.op}\` isn't supported`);
+    }
+    case "not": {
+      const a = n.arg;
+      if (a.type === "bin" && (a.op === "==" || a.op === "!=")) return shellCompare(a.op === "==" ? "!=" : "==", a.left, a.right, ctx);
+      if (a.type === "path") return `[ -z ${shellVar(a, ctx)} ]`;
+      return `! { ${shellCond(a, ctx)}; }`;
+    }
+    case "call":
+      if (["startsWith", "endsWith", "contains"].includes(n.name)) return shellMatch(n.name, n.args, ctx);
+      if (STATUS_FUNCS.has(n.name)) throw new Unsupported(`${n.name}() can't be checked from inside a script`);
+      throw new Unsupported(`function ${n.name}() has no shell equivalent`);
+    case "path":
+      return `[ -n ${shellVar(n, ctx)} ]`;
+    case "lit":
+      return n.value ? "true" : "false";
+  }
+}
+
+export type ShellResult = { ok: true; cond: string } | { ok: false; reason: string };
+
+/**
+ * Convert a step `if:` into a POSIX shell condition, for wrapping the step's
+ * script lines in `if ...; then ... fi`. `success()` is dropped (GitLab stops
+ * the script at the first failure anyway); other status functions are rejected.
+ */
+export function conditionToShell(raw: string | boolean, ctx: ExprContext): ShellResult {
+  if (typeof raw === "boolean") return { ok: true, cond: raw ? "true" : "false" };
+  const src = raw.trim().replace(/^\$\{\{([\s\S]*)\}\}$/, "$1");
+  try {
+    const parts = conjuncts(parseExpression(src)).filter((p) => !(p.type === "call" && p.name === "success" && !p.args.length));
+    if (!parts.length) return { ok: true, cond: "true" };
+    const cond = parts
+      .map((p) => {
+        const s = shellCond(p, ctx);
+        return parts.length > 1 && p.type === "bin" && p.op === "||" ? `{ ${s}; }` : s;
+      })
+      .join(" && ");
+    return { ok: true, cond };
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  }
+}

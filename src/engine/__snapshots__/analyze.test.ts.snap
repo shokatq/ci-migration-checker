@@ -14,11 +14,11 @@ exports[`fixture express-ci.yml > matches the reviewed output 2`] = `
 exports[`fixture fastapi-test.yml > matches the reviewed output 2`] = `
 {
   "counts": {
-    "clean": 38,
-    "manual": 28,
+    "clean": 43,
+    "manual": 23,
     "none": 3,
   },
-  "score": 75,
+  "score": 79,
 }
 `;
 
@@ -47,10 +47,10 @@ exports[`fixture gin.yml > matches the reviewed output 2`] = `
 exports[`fixture vite-ci.yml > matches the reviewed output 2`] = `
 {
   "counts": {
-    "clean": 33,
-    "manual": 13,
+    "clean": 34,
+    "manual": 12,
     "none": 0,
   },
-  "score": 86,
+  "score": 87,
 }
 `;

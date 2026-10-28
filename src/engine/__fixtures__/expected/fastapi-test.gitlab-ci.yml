@@ -64,16 +64,26 @@ test:
     - echo "$GITHUB_CONTEXT"
     - pip install uv
     - uv sync --no-dev --group tests --extra all
-    # TODO: only run when `matrix.uv-resolution == 'lowest-direct'`
-    - uv pip install "pydantic==2.9.0"
-    # TODO: only run when `matrix.starlette-src == 'starlette-git'`
-    - uv pip install "git+https://github.com/Kludex/starlette@main"
-    # TODO: only run when `matrix.deprecated-tests == 'test-deprecation'`
-    - uv pip install orjson ujson
-    # TODO: only run when `matrix.without-httpx2 == 'true'`
-    - uv pip uninstall httpx2
-    # TODO: only run when `matrix.python-version == '3.14t' && matrix.os == 'ubuntu-latest'`
-    - "DISABLE_SQLALCHEMY_CEXT=1 uv pip install --force-reinstall --no-binary :all: sqlalchemy"
+    - |-
+      if [ "$UV_RESOLUTION" = 'lowest-direct' ]; then
+      uv pip install "pydantic==2.9.0"
+      fi
+    - |-
+      if [ "$STARLETTE_SRC" = 'starlette-git' ]; then
+      uv pip install "git+https://github.com/Kludex/starlette@main"
+      fi
+    - |-
+      if [ "$DEPRECATED_TESTS" = 'test-deprecation' ]; then
+      uv pip install orjson ujson
+      fi
+    - |-
+      if [ "$WITHOUT_HTTPX2" = 'true' ]; then
+      uv pip uninstall httpx2
+      fi
+    - |-
+      if [ "$PYTHON_VERSION" = '3.14t' ] && [ "$OS" = 'ubuntu-latest' ]; then
+      DISABLE_SQLALCHEMY_CEXT=1 uv pip install --force-reinstall --no-binary :all: sqlalchemy
+      fi
     - mkdir coverage
     # TODO: runner.os has no GitLab equivalent; expression `(matrix.without-httpx2 == 'true') && '-W ignore::UserWarning' || ''` needs rewriting as shell logic
     - export COVERAGE_FILE="coverage/.coverage.${{ runner.os }}-py$PYTHON_VERSION-$DEPRECATED_TESTS"
@@ -124,16 +134,26 @@ test-windows:
     - echo "$GITHUB_CONTEXT"
     - pip install uv
     - uv sync --no-dev --group tests --extra all
-    # TODO: only run when `matrix.uv-resolution == 'lowest-direct'`
-    - uv pip install "pydantic==2.9.0"
-    # TODO: only run when `matrix.starlette-src == 'starlette-git'`
-    - uv pip install "git+https://github.com/Kludex/starlette@main"
-    # TODO: only run when `matrix.deprecated-tests == 'test-deprecation'`
-    - uv pip install orjson ujson
-    # TODO: only run when `matrix.without-httpx2 == 'true'`
-    - uv pip uninstall httpx2
-    # TODO: only run when `matrix.python-version == '3.14t' && matrix.os == 'ubuntu-latest'`
-    - "DISABLE_SQLALCHEMY_CEXT=1 uv pip install --force-reinstall --no-binary :all: sqlalchemy"
+    - |-
+      if [ "$UV_RESOLUTION" = 'lowest-direct' ]; then
+      uv pip install "pydantic==2.9.0"
+      fi
+    - |-
+      if [ "$STARLETTE_SRC" = 'starlette-git' ]; then
+      uv pip install "git+https://github.com/Kludex/starlette@main"
+      fi
+    - |-
+      if [ "$DEPRECATED_TESTS" = 'test-deprecation' ]; then
+      uv pip install orjson ujson
+      fi
+    - |-
+      if [ "$WITHOUT_HTTPX2" = 'true' ]; then
+      uv pip uninstall httpx2
+      fi
+    - |-
+      if [ "$PYTHON_VERSION" = '3.14t' ] && [ "$OS" = 'ubuntu-latest' ]; then
+      DISABLE_SQLALCHEMY_CEXT=1 uv pip install --force-reinstall --no-binary :all: sqlalchemy
+      fi
     - mkdir coverage
     # TODO: runner.os has no GitLab equivalent; expression `(matrix.without-httpx2 == 'true') && '-W ignore::UserWarning' || ''` needs rewriting as shell logic
     - export COVERAGE_FILE="coverage/.coverage.${{ runner.os }}-py$PYTHON_VERSION-$DEPRECATED_TESTS"
@@ -185,16 +205,26 @@ test-macos:
     - echo "$GITHUB_CONTEXT"
     - pip install uv
     - uv sync --no-dev --group tests --extra all
-    # TODO: only run when `matrix.uv-resolution == 'lowest-direct'`
-    - uv pip install "pydantic==2.9.0"
-    # TODO: only run when `matrix.starlette-src == 'starlette-git'`
-    - uv pip install "git+https://github.com/Kludex/starlette@main"
-    # TODO: only run when `matrix.deprecated-tests == 'test-deprecation'`
-    - uv pip install orjson ujson
-    # TODO: only run when `matrix.without-httpx2 == 'true'`
-    - uv pip uninstall httpx2
-    # TODO: only run when `matrix.python-version == '3.14t' && matrix.os == 'ubuntu-latest'`
-    - "DISABLE_SQLALCHEMY_CEXT=1 uv pip install --force-reinstall --no-binary :all: sqlalchemy"
+    - |-
+      if [ "$UV_RESOLUTION" = 'lowest-direct' ]; then
+      uv pip install "pydantic==2.9.0"
+      fi
+    - |-
+      if [ "$STARLETTE_SRC" = 'starlette-git' ]; then
+      uv pip install "git+https://github.com/Kludex/starlette@main"
+      fi
+    - |-
+      if [ "$DEPRECATED_TESTS" = 'test-deprecation' ]; then
+      uv pip install orjson ujson
+      fi
+    - |-
+      if [ "$WITHOUT_HTTPX2" = 'true' ]; then
+      uv pip uninstall httpx2
+      fi
+    - |-
+      if [ "$PYTHON_VERSION" = '3.14t' ] && [ "$OS" = 'ubuntu-latest' ]; then
+      DISABLE_SQLALCHEMY_CEXT=1 uv pip install --force-reinstall --no-binary :all: sqlalchemy
+      fi
     - mkdir coverage
     # TODO: runner.os has no GitLab equivalent; expression `(matrix.without-httpx2 == 'true') && '-W ignore::UserWarning' || ''` needs rewriting as shell logic
     - export COVERAGE_FILE="coverage/.coverage.${{ runner.os }}-py$PYTHON_VERSION-$DEPRECATED_TESTS"
@@ -248,12 +278,12 @@ regression-test:
   script:
     # TODO: only run when `github.event_name == 'pull_request'`
     # TODO: Check out the pull request (uses: actions/checkout@<sha>): GitLab clones the repo automatically; `fetch-depth: 0` → `GIT_DEPTH: "0"`; checking out another repo/path → clone it in `script` with `CI_JOB_TOKEN`
-    # TODO: only run when `github.event_name == 'pull_request'`
     - cd "$CI_PROJECT_DIR/pr"
     # TODO: `$GITHUB_OUTPUT` → plain shell variables within the job, or `artifacts:reports:dotenv` to pass values to other jobs; `$RUNNER_*` variables don't exist in GitLab; github.event.pull_request.base.sha (webhook payload) isn't exposed in GitLab CI; github.event.pull_request.head.sha (webhook payload) isn't exposed in GitLab CI
-    - export BASE_SHA="${{ github.event.pull_request.base.sha }}"
-    - export HEAD_SHA="${{ github.event.pull_request.head.sha }}"
     - |-
+      if [ "$CI_PIPELINE_SOURCE" = 'merge_request_event' ]; then
+      export BASE_SHA="${{ github.event.pull_request.base.sha }}"
+      export HEAD_SHA="${{ github.event.pull_request.head.sha }}"
       git diff --name-only --diff-filter=AM -z "$BASE_SHA" "$HEAD_SHA" -- tests \
         | while IFS= read -r -d '' file; do
             case "$(basename "$file")" in
@@ -267,6 +297,7 @@ regression-test:
       else
         echo "found=false" >> "$GITHUB_OUTPUT"
         echo "No added or modified test files; regression proof is not applicable."
+      fi
       fi
     # TODO: only run when `steps.changed-tests.outputs.found == 'true'`
     # TODO: Check out the base revision (uses: actions/checkout@<sha>): GitLab clones the repo automatically; checking out another repo/path → clone it in `script` with `CI_JOB_TOKEN`; custom `ref: ${{ github.event.pull_request.base.sha }}` → `git checkout` in script

@@ -121,7 +121,7 @@ jobs:
 });
 
 describe("step handling", () => {
-  it("moves always()/failure() steps to after_script and flags step conditions", () => {
+  it("moves always()/failure() steps to after_script and wraps other step conditions in shell if", () => {
     const { report, ci } = convert(`
 on: push
 jobs:
@@ -139,11 +139,20 @@ jobs:
         if: always()
       - run: ./only-main.sh
         if: github.ref == 'refs/heads/main'
+        env: { TARGET: prod }
+      - run: ./report.sh
+        if: steps.v.outputs.version == '1'
       - uses: some-org/unknown-action@v1
 `);
     expect(ci.t.image).toBe("python:3.12");
     expect(ci.t.after_script).toEqual(['if [ "$CI_JOB_STATUS" = "failed" ]; then\n./notify.sh\nfi', "./cleanup.sh"]);
-    expect(report.gitlabCi).toContain("# TODO: only run when `github.ref == 'refs/heads/main'`");
+    expect(ci.t.script).toContain(`if [ "$CI_COMMIT_BRANCH" = 'main' ]; then
+export TARGET="prod"
+./only-main.sh
+fi`);
+    expect(finding(report, "t", "run: ./only-main.sh").status).toBe("clean");
+    // Step outputs can't be checked from a script, so that one stays a TODO.
+    expect(report.gitlabCi).toContain("# TODO: only run when `steps.v.outputs.version == '1'`");
     expect(report.gitlabCi).toContain("# TODO: uses: some-org/unknown-action@v1");
     expect(finding(report, "t", /GITHUB_OUTPUT|version=1/).status).toBe("manual");
     expect(finding(report, "t", "uses: some-org/unknown-action@v1").status).toBe("none");

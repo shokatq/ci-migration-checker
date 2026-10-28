@@ -1,5 +1,6 @@
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { conditionToRule, newContext, parseExpression, translateInline } from "./expressions";
+import { conditionToRule, conditionToShell, newContext, parseExpression, translateInline } from "./expressions";
 
 describe("parseExpression", () => {
   it("respects operator precedence", () => {
@@ -100,5 +101,50 @@ describe("conditionToRule", () => {
     expect(rule("cancelled()").ok).toBe(false);
     expect(rule("always() || github.ref == 'x'").ok).toBe(false);
     expect(rule("fromJSON(env.X) > 3").ok).toBe(false);
+  });
+});
+
+describe("conditionToShell", () => {
+  const shell = (expr: string) => {
+    const r = conditionToShell(expr, newContext());
+    if (!r.ok) throw new Error(r.reason);
+    return r.cond;
+  };
+
+  it.each([
+    ["matrix.node_version == '20'", `[ "$NODE_VERSION" = '20' ]`],
+    ["matrix.os != 'ubuntu-latest'", `[ "$OS" != 'ubuntu-latest' ]`],
+    ["github.event_name == 'pull_request'", `[ "$CI_PIPELINE_SOURCE" = 'merge_request_event' ]`],
+    ["github.ref == 'refs/heads/main'", `[ "$CI_COMMIT_BRANCH" = 'main' ]`],
+    ["startsWith(github.ref, 'refs/tags/')", `[ -n "$CI_COMMIT_TAG" ]`],
+    ["startsWith(github.ref, 'refs/tags/v')", `case "$CI_COMMIT_TAG" in 'v'*) true ;; *) false ;; esac`],
+    ["contains(matrix.python, 'pypy')", `case "$PYTHON" in *'pypy'*) true ;; *) false ;; esac`],
+    ["env.DEPLOY", `[ -n "$DEPLOY" ]`],
+    ["!env.SKIP", `[ -z "$SKIP" ]`],
+    ["success() && matrix.coverage == 'true'", `[ "$COVERAGE" = 'true' ]`],
+    ["(matrix.a == '1' || matrix.b == '2') && env.C", `{ [ "$A" = '1' ] || [ "$B" = '2' ]; } && [ -n "$C" ]`],
+  ])("%s → %s", (expr, expected) => {
+    expect(shell(expr)).toBe(expected);
+  });
+
+  it("rejects what a script can't check", () => {
+    for (const expr of ["steps.x.outputs.y == 'true'", "runner.os == 'Linux'", "always() || env.X", "fromJSON(env.X)", "env.X == 'it''s'"]) {
+      expect(conditionToShell(expr, newContext()).ok, expr).toBe(false);
+    }
+  });
+
+  // Run the generated conditions in a real POSIX shell, so quoting mistakes fail the build.
+  const hasSh = spawnSync("sh", ["-c", "true"]).status === 0;
+  it.skipIf(!hasSh).each([
+    ["(matrix.a == '1' || matrix.b == '2') && env.C", { A: "1", B: "x", C: "yes" }, true],
+    ["(matrix.a == '1' || matrix.b == '2') && env.C", { A: "0", B: "x", C: "yes" }, false],
+    ["startsWith(github.ref, 'refs/tags/v')", { CI_COMMIT_TAG: "v1.2.0" }, true],
+    ["startsWith(github.ref, 'refs/tags/v')", { CI_COMMIT_TAG: "release-1" }, false],
+    ["contains(matrix.python, 'pypy')", { PYTHON: "pypy-3.11" }, true],
+    ["!env.SKIP && matrix.os != 'windows-latest'", { SKIP: "", OS: "ubuntu-latest" }, true],
+    ["!env.SKIP && matrix.os != 'windows-latest'", { SKIP: "1", OS: "ubuntu-latest" }, false],
+  ] as const)("runs %s with %o in sh", (expr, env, expected) => {
+    const r = spawnSync("sh", ["-c", `if ${shell(expr)}; then exit 0; else exit 1; fi`], { env: { ...process.env, ...env } });
+    expect(r.status === 0).toBe(expected);
   });
 });

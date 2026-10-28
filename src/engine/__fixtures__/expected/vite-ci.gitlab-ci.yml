@@ -76,8 +76,10 @@ test:
     # TODO: Cache Playwright's binary (uses: actions/cache@<sha>): → `cache:` with the same paths and key; runner.os has no GitLab equivalent; `restore-keys` → `cache:fallback_keys` if you need them
     - pnpm playwright install chromium
     - pnpm run build
-    # TODO: only run when `matrix.node_version == '20'`
-    - pnpm runtime set node $NODE_VERSION -g
+    - |-
+      if [ "$NODE_VERSION" = '20' ]; then
+      pnpm runtime set node $NODE_VERSION -g
+      fi
     - pnpm run test-unit
     - pnpm run test-serve
     - pnpm run test-serve-bundled
@@ -126,8 +128,10 @@ test-windows:
     # TODO: Cache Playwright's binary (uses: actions/cache@<sha>): → `cache:` with the same paths and key; runner.os has no GitLab equivalent; `restore-keys` → `cache:fallback_keys` if you need them
     - pnpm playwright install chromium
     - pnpm run build
-    # TODO: only run when `matrix.node_version == '20'`
-    - pnpm runtime set node $NODE_VERSION -g
+    - |-
+      if [ "$NODE_VERSION" = '20' ]; then
+      pnpm runtime set node $NODE_VERSION -g
+      fi
     - pnpm run test-unit
     - pnpm run test-serve
     - pnpm run test-serve-bundled
@@ -177,8 +181,10 @@ test-macos:
     # TODO: Cache Playwright's binary (uses: actions/cache@<sha>): → `cache:` with the same paths and key; runner.os has no GitLab equivalent; `restore-keys` → `cache:fallback_keys` if you need them
     - pnpm playwright install chromium
     - pnpm run build
-    # TODO: only run when `matrix.node_version == '20'`
-    - pnpm runtime set node $NODE_VERSION -g
+    - |-
+      if [ "$NODE_VERSION" = '20' ]; then
+      pnpm runtime set node $NODE_VERSION -g
+      fi
     - pnpm run test-unit
     - pnpm run test-serve
     - pnpm run test-serve-bundled
